@@ -10,7 +10,10 @@ Require [API Keys](https://www.binance.com/en/usercenter/settings/api-management
 Set Environment variables:
 - `BINANCE_APIKEY`
 - `BINANCE_SECRET`
-- `TELEGRAM_TOKEN` (optional to notify)
+- `COINBASEPRO_KEY`  
+- `COINBASEPRO_SECRET`  
+- `COINBASEPRO_PASSPHRASE`  
+- `TELEGRAM_TOKEN` or `SLACK_WEBHOOK` (optional to notify)
 
 Simple command to run bot stoploss
 > Sell all BTC balance to market price when down 3%.

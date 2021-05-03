@@ -1,0 +1,10 @@
+coins:
+  sell:
+    - exchange: binance
+      pair: DOGE/USDT
+      percent: 3
+      amount: 500
+    - exchange: coinbase
+      pair: CGLD/USD
+      percent: 3
+      amount: 100
