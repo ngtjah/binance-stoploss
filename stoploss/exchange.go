@@ -6,4 +6,5 @@ type Exchange interface {
 	GetMarketPrice(baseCoin string, countCount string) (float64, error)
 	Sell(baseCoin string, countCount string, quantity string) (string, error)
 	Buy(baseCoin string, countCount string, quantity string) (string, error)
+	Name() string
 }

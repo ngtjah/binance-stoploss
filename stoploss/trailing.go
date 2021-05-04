@@ -11,29 +11,20 @@ import (
 
 // Trailing stop-loss runner
 type Trailing struct {
-	exchange   Exchange
-	notify     Notify
-	orderType  string
-	market     string
-	baseCoin   string
-	countCoin  string
-	lastStop   float64
-	price      float64
-	quantity   string
-	stopFactor float64
-	cache      Cache
-	cachePath  string
-	logger     *log.Logger
-	fileMutex  *sync.Mutex
-}
-
-type Cache struct {
-	Sell []Sell `yaml:"sell"`
-}
-
-type Sell struct {
-	Pair     string  `yaml:"pair"`
-	LastStop float64 `yaml:"lastStop"`
+	exchange      Exchange
+	notify        Notify
+	orderType     string
+	market        string
+	baseCoin      string
+	countCoin     string
+	lastStop      float64
+	lastStopCache float64
+	price         float64
+	quantity      string
+	stopFactor    float64
+	cachePath     string
+	logger        *log.Logger
+	fileMutex     *sync.Mutex
 }
 
 // NewTrailing new trailing instance
@@ -85,32 +76,10 @@ func (tlg *Trailing) runSell() bool {
 		return true
 	}
 
-	stop := tlg.getSellStop(marketPrice)
-
-	// remove me!!!!!!!!!!!!!!!!!!!!!!
-	quantity := tlg.quantity
-	if quantity == "" {
-		quantity, err = tlg.exchange.GetBalance(tlg.baseCoin)
-		if err != nil {
-			tlg.notify.Send("Cannot get balance, error:" + err.Error())
-			return true
-		}
-	}
-	// remove me!!!!!!!!!!!!!!!!!!!!!!
-
 	// Grab the lastStop from the cache
 	if tlg.lastStop == 0 {
-		exists := false
-		for _, v := range tlg.cache.Sell {
-			if v.Pair == fmt.Sprintf("%s/%s", tlg.baseCoin, tlg.countCoin) {
-				exists = true
-				tlg.lastStop = v.LastStop
-				//tlg.logger.Printf("Loading %s LastStop: %f\n", v.Pair, v.LastStop)
-			}
-		}
-
-		if !exists {
-			tlg.cache.Sell = append(tlg.cache.Sell, Sell{Pair: fmt.Sprintf("%s/%s", tlg.baseCoin, tlg.countCoin), LastStop: tlg.lastStop})
+		if tlg.lastStopCache > 0 {
+			tlg.lastStop = tlg.lastStopCache
 		}
 
 		stop := tlg.getSellStop(marketPrice)
@@ -121,16 +90,16 @@ func (tlg *Trailing) runSell() bool {
 		}
 	}
 
-	//stop := tlg.getSellStop(marketPrice)
+	stop := tlg.getSellStop(marketPrice)
 
 	if marketPrice > stop {
 		tlg.notifyStopLossChange(tlg.lastStop, stop, marketPrice)
 
-		tlg.setLastStop(stop)
+		tlg.lastStop = stop
 		return false
 	}
 
-	//quantity := tlg.quantity
+	quantity := tlg.quantity
 	if quantity == "" {
 		quantity, err = tlg.exchange.GetBalance(tlg.baseCoin)
 		if err != nil {
@@ -144,21 +113,10 @@ func (tlg *Trailing) runSell() bool {
 		tlg.notify.Send("market: " + tlg.market + " quantity: " + quantity)
 		tlg.notify.Send("Cannot create sell order, error:" + err.Error())
 	} else {
-		tlg.notify.Send(fmt.Sprintf("Sell: %s %s - Market Price (%s): %.6f - Order ID: %s", quantity, tlg.baseCoin, tlg.market, marketPrice, order))
+		tlg.notify.Send(fmt.Sprintf("Sell: %s %s - Market Price (%s): %.8f - Order ID: %s", quantity, tlg.baseCoin, tlg.market, marketPrice, order))
 	}
 
 	return true
-}
-
-func (tlg *Trailing) setLastStop(stop float64) {
-	tlg.lastStop = stop
-
-	for i, v := range tlg.cache.Sell {
-		if v.Pair == fmt.Sprintf("%s/%s", tlg.baseCoin, tlg.countCoin) {
-			tlg.cache.Sell[i].LastStop = tlg.lastStop
-			//tlg.logger.Printf("Setting %s LastStop in Cache: %f\n", v.Pair, tlg.lastStop)
-		}
-	}
 }
 
 func (tlg *Trailing) runBuy() bool {
@@ -190,7 +148,7 @@ func (tlg *Trailing) runBuy() bool {
 	if err != nil {
 		tlg.notify.Send("Cannot create buy order, error:" + err.Error())
 	} else {
-		tlg.notify.Send(fmt.Sprintf("Buy: %s %s - Market Price (%s): %.6f - Order ID: %s", quantity, tlg.baseCoin, tlg.market, marketPrice, order))
+		tlg.notify.Send(fmt.Sprintf("Buy: %s %s - Market Price (%s): %.8f - Order ID: %s", quantity, tlg.baseCoin, tlg.market, marketPrice, order))
 	}
 
 	return true
@@ -219,5 +177,5 @@ func (tlg *Trailing) notifyStopLossChange(prev float64, next float64, price floa
 		return
 	}
 
-	tlg.notify.Send(fmt.Sprintf("Stop-loss %s/%s (%s -%.2f%%): %.6f - Market Price: %.6f", tlg.baseCoin, tlg.countCoin, tlg.orderType, tlg.stopFactor*100, next, price))
+	tlg.notify.Send(fmt.Sprintf("Stop-loss %s/%s (%s -%.2f%%): %.8f - Market Price: %.8f", tlg.baseCoin, tlg.countCoin, tlg.orderType, tlg.stopFactor*100, next, price))
 }

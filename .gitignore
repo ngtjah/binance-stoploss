@@ -1,4 +1,4 @@
 .idea
 env.sh*
-.cache.yaml
+.cache.yaml*
 config.yaml

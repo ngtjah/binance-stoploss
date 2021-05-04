@@ -18,6 +18,10 @@ func NewCoinbaseExchange(ctx context.Context, api *coinbasepro.Client) *Coinbase
 	return &Coinbase{api, ctx}
 }
 
+func (exchange *Coinbase) Name() string {
+	return "coinbase"
+}
+
 // GetBalance get balance for coin
 func (exchange *Coinbase) GetBalance(coin string) (string, error) {
 	coin = strings.ToUpper(coin)

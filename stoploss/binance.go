@@ -18,6 +18,10 @@ func NewBinanceExchange(ctx context.Context, api *binance.Client) *Binance {
 	return &Binance{api, ctx}
 }
 
+func (exchange *Binance) Name() string {
+	return "binance"
+}
+
 // GetBalance get balance for coin
 func (exchange *Binance) GetBalance(coin string) (string, error) {
 	coin = strings.ToUpper(coin)
