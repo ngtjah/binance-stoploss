@@ -99,6 +99,7 @@ func main() {
 	})
 
 	var notify stoploss.Notify
+
 	telegramToken, telegramTokenExists := os.LookupEnv("TELEGRAM_TOKEN")
 	if telegramTokenExists {
 		notify = stoploss.NewTelegram(telegramToken, *chatPtr, logger)
@@ -168,7 +169,7 @@ func main() {
 					v.Pair,
 					v.Percent/100,
 					v.Amount,
-					v.Price, // 0.0
+					v.Price,
 					logger,
 					&fileMutex,
 				)

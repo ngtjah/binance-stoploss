@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 )
 
 type Cache struct {
@@ -15,9 +16,12 @@ type Cache struct {
 }
 
 type Sell struct {
-	Pair     string  `yaml:"pair"`
-	LastStop float64 `yaml:"lastStop"`
-	Exchange string  `yaml:"exchange"`
+	Pair       string    `yaml:"pair"`
+	LastStop   float64   `yaml:"lastStop"`
+	Exchange   string    `yaml:"exchange"`
+	Percentage float64   `yaml:"percentage"`
+	Amount     string    `yaml:"amount"`
+	Updated    time.Time `yaml:"updated"`
 }
 
 func (tlg *Trailing) loadCache(cachePath string, fileMutex *sync.Mutex) {
@@ -55,10 +59,9 @@ func (tlg *Trailing) loadCache(cachePath string, fileMutex *sync.Mutex) {
 
 func (tlg *Trailing) SaveCache(fileMutex *sync.Mutex) {
 	cachePath := ".cache.yaml"
+	fileCache := Cache{}
 
 	//tlg.logger.Printf("Setting Cache: %+v\n", tlg.cache)
-
-	fileCache := Cache{}
 
 	fileMutex.Lock()
 	defer fileMutex.Unlock()
@@ -86,17 +89,35 @@ func (tlg *Trailing) SaveCache(fileMutex *sync.Mutex) {
 	for i, v := range fileCache.Sell {
 		market := fmt.Sprintf("%s/%s", tlg.baseCoin, tlg.countCoin)
 		if (v.Pair == market) && (v.Exchange == tlg.exchange.Name()) {
-			found = true
-			fileCache.Sell[i].LastStop = tlg.lastStop
-			fileCache.Sell[i].Exchange = tlg.exchange.Name()
-			//tlg.logger.Printf("Setting %s LastStop in tlg.lastStopCache: %f\n", v.Pair, v.LastStop)
+			if (v.Amount == tlg.quantity && v.Percentage == tlg.stopFactor*100) && (time.Since(v.Updated).Minutes() < 60) {
+				found = true
+				fileCache.Sell[i].LastStop = tlg.lastStop
+				fileCache.Sell[i].Exchange = tlg.exchange.Name()
+				fileCache.Sell[i].Percentage = tlg.stopFactor * 100
+				fileCache.Sell[i].Amount = tlg.quantity
+				fileCache.Sell[i].Updated = time.Now()
+				//tlg.logger.Printf("Setting %s LastStop in tlg.lastStopCache: %f\n", v.Pair, v.LastStop)
+			} else {
+				// remove the expired or inconsistent cache item and let it rebuild
+				fileCache.Sell = append(fileCache.Sell[:i], fileCache.Sell[i+1:]...)
+				tlg.logger.Printf("Removing expired or inconsistent %s cache item: %s\n", v.Exchange, v.Pair)
+			}
 		}
 	}
 
 	// add it if it wasn't found
 	if !found {
 		market := fmt.Sprintf("%s/%s", tlg.baseCoin, tlg.countCoin)
-		fileCache.Sell = append(fileCache.Sell, Sell{Pair: market, LastStop: tlg.lastStop, Exchange: tlg.exchange.Name()})
+		fileCache.Sell = append(fileCache.Sell,
+			Sell{
+				Pair:       market,
+				LastStop:   tlg.lastStop,
+				Exchange:   tlg.exchange.Name(),
+				Percentage: tlg.stopFactor * 100,
+				Amount:     tlg.quantity,
+				Updated:    time.Now(),
+			},
+		)
 	}
 
 	// re-encode YAML
