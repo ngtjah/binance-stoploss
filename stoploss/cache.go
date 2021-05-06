@@ -22,6 +22,8 @@ type Sell struct {
 	Percentage float64   `yaml:"percentage"`
 	Amount     string    `yaml:"amount"`
 	Updated    time.Time `yaml:"updated"`
+	BuyPrice   float64   `yaml:"buy_price"`
+	BuyPercent float64   `yaml:"buy_percent"`
 }
 
 func (tlg *Trailing) loadCache(cachePath string, fileMutex *sync.Mutex) {
@@ -49,12 +51,26 @@ func (tlg *Trailing) loadCache(cachePath string, fileMutex *sync.Mutex) {
 
 	//tlg.logger.Printf("Loading the cache: %+v\n", cache)
 
-	for _, v := range cache.Sell {
-		if v.Pair == fmt.Sprintf("%s/%s", tlg.baseCoin, tlg.countCoin) {
-			tlg.lastStopCache = v.LastStop
-			//tlg.logger.Printf("Setting %s LastStop in tlg.lastStopCache: %f\n", v.Pair, v.LastStop)
+	for _, order := range cache.Sell {
+		market := fmt.Sprintf("%s/%s", tlg.baseCoin, tlg.countCoin)
+		if (order.Pair == market) && (order.Exchange == tlg.exchange.Name()) {
+			// make sure these other values haven't changed and an hour hasn't past since the last update
+			if tlg.ValidateCache(order) {
+				tlg.lastStopCache = order.LastStop
+				//tlg.logger.Printf("Setting %s LastStop in tlg.lastStopCache: %f\n", v.Pair, v.LastStop)
+			} else {
+				// expired
+				//tlg.lastStop = 0
+				//tlg.lastStopCache = 0
+			}
 		}
 	}
+}
+
+func (tlg *Trailing) ValidateCache(order Sell) bool {
+	return (order.Amount == tlg.quantity && order.Percentage == tlg.stopFactor*100 &&
+		order.BuyPrice == tlg.buyPrice && order.BuyPercent == tlg.buyStopFactor*100) &&
+		(time.Since(order.Updated).Minutes() < 60)
 }
 
 func (tlg *Trailing) SaveCache(fileMutex *sync.Mutex) {
@@ -85,29 +101,35 @@ func (tlg *Trailing) SaveCache(fileMutex *sync.Mutex) {
 	}
 
 	// see if we need to update the existing value
-	found := false
-	for i, v := range fileCache.Sell {
+	status := "not found"
+	for i, order := range fileCache.Sell {
 		market := fmt.Sprintf("%s/%s", tlg.baseCoin, tlg.countCoin)
-		if (v.Pair == market) && (v.Exchange == tlg.exchange.Name()) {
-			if (v.Amount == tlg.quantity && v.Percentage == tlg.stopFactor*100) && (time.Since(v.Updated).Minutes() < 60) {
-				found = true
+		if (order.Pair == market) && (order.Exchange == tlg.exchange.Name()) {
+			// make sure these other values haven't changed and an hour hasn't past since the last update
+			if tlg.ValidateCache(order) {
+				status = "found"
 				fileCache.Sell[i].LastStop = tlg.lastStop
-				fileCache.Sell[i].Exchange = tlg.exchange.Name()
 				fileCache.Sell[i].Percentage = tlg.stopFactor * 100
 				fileCache.Sell[i].Amount = tlg.quantity
 				fileCache.Sell[i].Updated = time.Now()
+				fileCache.Sell[i].BuyPrice = tlg.buyPrice
+				fileCache.Sell[i].BuyPercent = tlg.buyStopFactor * 100
 				//tlg.logger.Printf("Setting %s LastStop in tlg.lastStopCache: %f\n", v.Pair, v.LastStop)
 			} else {
+				status = "expired" // move expired to load time
+				//tlg.lastStop = 0
+				//tlg.lastStopCache = 0
 				// remove the expired or inconsistent cache item and let it rebuild
 				fileCache.Sell = append(fileCache.Sell[:i], fileCache.Sell[i+1:]...)
-				tlg.logger.Printf("Removing expired or inconsistent %s cache item: %s\n", v.Exchange, v.Pair)
+				tlg.logger.Printf("Removing expired or inconsistent %s cache item: %s\n", order.Exchange, order.Pair)
 			}
 		}
 	}
 
 	// add it if it wasn't found
-	if !found {
+	if status != "found" {
 		market := fmt.Sprintf("%s/%s", tlg.baseCoin, tlg.countCoin)
+
 		fileCache.Sell = append(fileCache.Sell,
 			Sell{
 				Pair:       market,
@@ -115,6 +137,8 @@ func (tlg *Trailing) SaveCache(fileMutex *sync.Mutex) {
 				Exchange:   tlg.exchange.Name(),
 				Percentage: tlg.stopFactor * 100,
 				Amount:     tlg.quantity,
+				BuyPrice:   tlg.buyPrice,
+				BuyPercent: tlg.buyStopFactor * 100,
 				Updated:    time.Now(),
 			},
 		)

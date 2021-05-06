@@ -18,15 +18,17 @@ import (
 )
 
 var (
-	typePtr      = flag.String("type", "SELL", "order type: SELL or BUY")
-	pairPtr      = flag.String("pair", "", "market pair, example: BNB/USDT")
-	percentPtr   = flag.Float64("percent", 0.00, "percent (for trailing stop loss), example: 3.0 (3%)")
-	pricePtr     = flag.Float64("price", 0.00, "price (for static stop loss), example: 9200.00 (BTC price)")
-	intervalPtr  = flag.Int("interval", 30, "interval in seconds to update price, example: 30 (30 sec.)")
-	amountPtr    = flag.String("amount", "", "(optional) amount to order (sell or buy) on stoploss")
-	chatPtr      = flag.Int64("telegram.chat", 0, "(optional) telegram User ID for notify")
-	cfgPtr       = flag.String("cfg", "", "Enable config file mode")
-	binanceUsPtr = flag.Bool("binance.us", false, "Switch to the binance.us api")
+	typePtr       = flag.String("type", "SELL", "order type: SELL or BUY")
+	pairPtr       = flag.String("pair", "", "market pair, example: BNB/USDT")
+	percentPtr    = flag.Float64("percent", 0.00, "percent (for trailing stop loss), example: 3.0 (3%)")
+	buyPercentPtr = flag.Float64("max.percent", 0.00, "max percent (for total stop loss), example: 1.0 (1%)")
+	buyPricePtr   = flag.Float64("buy.price", 0.00, "max percent (for total stop loss), example: 1.0 (1%)")
+	pricePtr      = flag.Float64("price", 0.00, "price (for static stop loss), example: 9200.00 (BTC price)")
+	intervalPtr   = flag.Int("interval", 30, "interval in seconds to update price, example: 30 (30 sec.)")
+	amountPtr     = flag.String("amount", "", "(optional) amount to order (sell or buy) on stoploss")
+	chatPtr       = flag.Int64("telegram.chat", 0, "(optional) telegram User ID for notify")
+	cfgPtr        = flag.String("cfg", "", "Enable config file mode")
+	binanceUsPtr  = flag.Bool("binance.us", false, "Switch to the binance.us api")
 )
 
 type Config struct {
@@ -36,11 +38,13 @@ type Config struct {
 }
 
 type Sell struct {
-	Pair     string  `yaml:"pair"`
-	Percent  float64 `yaml:"percent"`
-	Amount   string  `yaml:"amount"`
-	Price    float64 `yaml:"price"`
-	Exchange string  `yaml:"exchange"`
+	Pair       string  `yaml:"pair"`
+	Percent    float64 `yaml:"percent"`
+	Amount     string  `yaml:"amount"`
+	Price      float64 `yaml:"price"`
+	Exchange   string  `yaml:"exchange"`
+	BuyPrice   float64 `yaml:"buy_price"`
+	BuyPercent float64 `yaml:"buy_percent"`
 }
 
 func main() {
@@ -116,6 +120,8 @@ func main() {
 			*typePtr,
 			*pairPtr,
 			*percentPtr/100,
+			*buyPercentPtr/100,
+			*buyPricePtr,
 			*amountPtr,
 			*pricePtr,
 			logger,
@@ -168,6 +174,8 @@ func main() {
 					"SELL",
 					v.Pair,
 					v.Percent/100,
+					v.BuyPercent/100,
+					v.BuyPrice,
 					v.Amount,
 					v.Price,
 					logger,
