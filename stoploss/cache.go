@@ -16,14 +16,12 @@ type Cache struct {
 }
 
 type Sell struct {
-	Pair       string    `yaml:"pair"`
-	LastStop   float64   `yaml:"lastStop"`
-	Exchange   string    `yaml:"exchange"`
-	Percentage float64   `yaml:"percentage"`
-	Amount     string    `yaml:"amount"`
-	Updated    time.Time `yaml:"updated"`
-	BuyPrice   float64   `yaml:"buy_price"`
-	BuyPercent float64   `yaml:"buy_percent"`
+	Exchange          string    `yaml:"exchange"`
+	Pair              string    `yaml:"pair"`
+	LastStop          float64   `yaml:"lastStop"`
+	BuyPrice          float64   `yaml:"buy_price"`
+	ObservedHighPrice float64   `yaml:"observed_high_price"`
+	Updated           time.Time `yaml:"updated"`
 }
 
 func (tlg *Trailing) loadCache(cachePath string, fileMutex *sync.Mutex) {
@@ -56,21 +54,20 @@ func (tlg *Trailing) loadCache(cachePath string, fileMutex *sync.Mutex) {
 		if (order.Pair == market) && (order.Exchange == tlg.exchange.Name()) {
 			// make sure these other values haven't changed and an hour hasn't past since the last update
 			if tlg.ValidateCache(order) {
+				// these are the only fields we pull in from the cache
 				tlg.lastStopCache = order.LastStop
+				tlg.observedHighPrice = order.ObservedHighPrice
 				//tlg.logger.Printf("Setting %s LastStop in tlg.lastStopCache: %f\n", v.Pair, v.LastStop)
 			} else {
 				// expired
-				//tlg.lastStop = 0
-				//tlg.lastStopCache = 0
+				tlg.logger.Printf("Cache Import: Ignoring expired or inconsistent %s cache item: %s\n", order.Exchange, order.Pair)
 			}
 		}
 	}
 }
 
 func (tlg *Trailing) ValidateCache(order Sell) bool {
-	return (order.Amount == tlg.quantity && order.Percentage == tlg.stopFactor*100 &&
-		order.BuyPrice == tlg.buyPrice && order.BuyPercent == tlg.buyStopFactor*100) &&
-		(time.Since(order.Updated).Minutes() < 60)
+	return (order.BuyPrice == tlg.buyPrice) && (time.Since(order.Updated).Minutes() < 60)
 }
 
 func (tlg *Trailing) SaveCache(fileMutex *sync.Mutex) {
@@ -109,19 +106,14 @@ func (tlg *Trailing) SaveCache(fileMutex *sync.Mutex) {
 			if tlg.ValidateCache(order) {
 				status = "found"
 				fileCache.Sell[i].LastStop = tlg.lastStop
-				fileCache.Sell[i].Percentage = tlg.stopFactor * 100
-				fileCache.Sell[i].Amount = tlg.quantity
-				fileCache.Sell[i].Updated = time.Now()
 				fileCache.Sell[i].BuyPrice = tlg.buyPrice
-				fileCache.Sell[i].BuyPercent = tlg.buyStopFactor * 100
+				fileCache.Sell[i].ObservedHighPrice = tlg.observedHighPrice
+				fileCache.Sell[i].Updated = time.Now()
 				//tlg.logger.Printf("Setting %s LastStop in tlg.lastStopCache: %f\n", v.Pair, v.LastStop)
 			} else {
-				status = "expired" // move expired to load time
-				//tlg.lastStop = 0
-				//tlg.lastStopCache = 0
-				// remove the expired or inconsistent cache item and let it rebuild
+				status = "expired"
 				fileCache.Sell = append(fileCache.Sell[:i], fileCache.Sell[i+1:]...)
-				tlg.logger.Printf("Removing expired or inconsistent %s cache item: %s\n", order.Exchange, order.Pair)
+				tlg.logger.Printf("Cache Import: Removing expired or inconsistent %s cache item: %s\n", order.Exchange, order.Pair)
 			}
 		}
 	}
@@ -132,14 +124,12 @@ func (tlg *Trailing) SaveCache(fileMutex *sync.Mutex) {
 
 		fileCache.Sell = append(fileCache.Sell,
 			Sell{
-				Pair:       market,
-				LastStop:   tlg.lastStop,
-				Exchange:   tlg.exchange.Name(),
-				Percentage: tlg.stopFactor * 100,
-				Amount:     tlg.quantity,
-				BuyPrice:   tlg.buyPrice,
-				BuyPercent: tlg.buyStopFactor * 100,
-				Updated:    time.Now(),
+				Exchange:          tlg.exchange.Name(),
+				Pair:              market,
+				LastStop:          tlg.lastStop,
+				BuyPrice:          tlg.buyPrice,
+				ObservedHighPrice: tlg.observedHighPrice,
+				Updated:           time.Now(),
 			},
 		)
 	}

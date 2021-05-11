@@ -18,17 +18,19 @@ import (
 )
 
 var (
-	typePtr       = flag.String("type", "SELL", "order type: SELL or BUY")
-	pairPtr       = flag.String("pair", "", "market pair, example: BNB/USDT")
-	percentPtr    = flag.Float64("percent", 0.00, "percent (for trailing stop loss), example: 3.0 (3%)")
-	buyPercentPtr = flag.Float64("max.percent", 0.00, "max percent (for total stop loss), example: 1.0 (1%)")
-	buyPricePtr   = flag.Float64("buy.price", 0.00, "max percent (for total stop loss), example: 1.0 (1%)")
-	pricePtr      = flag.Float64("price", 0.00, "price (for static stop loss), example: 9200.00 (BTC price)")
-	intervalPtr   = flag.Int("interval", 30, "interval in seconds to update price, example: 30 (30 sec.)")
-	amountPtr     = flag.String("amount", "", "(optional) amount to order (sell or buy) on stoploss")
-	chatPtr       = flag.Int64("telegram.chat", 0, "(optional) telegram User ID for notify")
-	cfgPtr        = flag.String("cfg", "", "Enable config file mode")
-	binanceUsPtr  = flag.Bool("binance.us", false, "Switch to the binance.us api")
+	typePtr             = flag.String("type", "SELL", "order type: SELL or BUY")
+	pairPtr             = flag.String("pair", "", "market pair, example: BNB/USDT")
+	startPercentPtr     = flag.Float64("start.percent", 0.00, "min percent (for trailing stop loss), example: 1.0 (1%)")
+	endPercentPtr       = flag.Float64("end.percent", 0.00, "max percent (for trailing stop loss), example: 3.0 (3%)")
+	maxLossPercentPtr   = flag.Float64("max.loss.percent", 0.00, "max percent (for total stop loss), example: 1.0 (1%)")
+	buyPricePtr         = flag.Float64("buy.price", 0.00, "max percent (for total stop loss), example: 1.0 (1%)")
+	limitSellPercentPtr = flag.Float64("sell.limit.percent", 0.00, "max percent gain for a limit sell order, example: 1.0 (1%)")
+	pricePtr            = flag.Float64("price", 0.00, "price (for static stop loss), example: 9200.00 (BTC price)")
+	intervalPtr         = flag.Int("interval", 10, "interval in seconds to update price, example: 10 (10 sec.)")
+	amountPtr           = flag.String("amount", "", "(optional) amount to order (sell or buy) on stoploss")
+	chatPtr             = flag.Int64("telegram.chat", 0, "(optional) telegram User ID for notify")
+	cfgPtr              = flag.String("cfg", "", "Enable config file mode")
+	binanceUsPtr        = flag.Bool("binance.us", false, "Switch to the binance.us api")
 )
 
 type Config struct {
@@ -38,23 +40,28 @@ type Config struct {
 }
 
 type Sell struct {
-	Pair       string  `yaml:"pair"`
-	Percent    float64 `yaml:"percent"`
-	Amount     string  `yaml:"amount"`
-	Price      float64 `yaml:"price"`
-	Exchange   string  `yaml:"exchange"`
-	BuyPrice   float64 `yaml:"buy_price"`
-	BuyPercent float64 `yaml:"buy_percent"`
+	Pair             string  `yaml:"pair"`
+	StartPercent     float64 `yaml:"start_percent"`
+	EndPercent       float64 `yaml:"end_percent"`
+	Amount           string  `yaml:"amount"`
+	Price            float64 `yaml:"price"`
+	Exchange         string  `yaml:"exchange"`
+	BuyPrice         float64 `yaml:"buy_price"`
+	MaxLossPercent   float64 `yaml:"max_loss_percent"`
+	LimitSellPercent float64 `yaml:"limit_sell_percent"`
 }
 
 func main() {
 	flag.Parse()
+
 	binanceApiKey := os.Getenv("BINANCE_APIKEY")
 	binanceSecret := os.Getenv("BINANCE_SECRET")
 
 	coinbaseKey := os.Getenv("COINBASEPRO_KEY")
 	coinbaseSecret := os.Getenv("COINBASEPRO_SECRET")
 	coinbasePassphrase := os.Getenv("COINBASEPRO_PASSPHRASE")
+
+	chatNotify := os.Getenv("CHAT_NOTIFY")
 
 	if binanceApiKey == "" || binanceSecret == "" {
 		log.Fatal("BINANCE_APIKEY, BINANCE_SECRET are required")
@@ -69,7 +76,7 @@ func main() {
 			log.Fatal("pair market is required")
 		}
 
-		if (percentPtr == nil || *percentPtr <= 0) && (pricePtr == nil || *pricePtr <= 0) {
+		if (startPercentPtr == nil || *startPercentPtr <= 0) && (endPercentPtr == nil || *endPercentPtr <= 0) && (pricePtr == nil || *pricePtr <= 0) {
 			log.Fatal("a price or percent parameter is required")
 		}
 	}
@@ -119,13 +126,16 @@ func main() {
 			notify,
 			*typePtr,
 			*pairPtr,
-			*percentPtr/100,
-			*buyPercentPtr/100,
+			*startPercentPtr/100,
+			*endPercentPtr/100,
+			*maxLossPercentPtr/100,
+			*limitSellPercentPtr/100,
 			*buyPricePtr,
 			*amountPtr,
 			*pricePtr,
 			logger,
 			&fileMutex,
+			chatNotify,
 		)
 
 		for {
@@ -173,14 +183,21 @@ func main() {
 					notify,
 					"SELL",
 					v.Pair,
-					v.Percent/100,
-					v.BuyPercent/100,
+					v.StartPercent/100,
+					v.EndPercent/100,
+					v.MaxLossPercent/100,
+					v.LimitSellPercent/100,
 					v.BuyPrice,
 					v.Amount,
 					v.Price,
 					logger,
 					&fileMutex,
+					chatNotify,
 				)
+
+				//fileMutex.Lock()
+				//trailing.Chart(v.Exchange, v.Pair)
+				//fileMutex.Unlock()
 
 				for {
 					if trailing.RunStop() {

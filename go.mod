@@ -5,6 +5,7 @@ go 1.14
 require (
 	github.com/adshao/go-binance/v2 v2.2.1
 	github.com/ashwanthkumar/slack-go-webhook v0.0.0-20200209025033-430dd4e66960
+	github.com/buger/goterm v1.0.0
 	github.com/elazarl/goproxy v0.0.0-20210110162100-a92cc753f88e // indirect
 	github.com/go-telegram-bot-api/telegram-bot-api v4.6.4+incompatible
 	github.com/hashicorp/go-retryablehttp v0.6.8

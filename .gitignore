@@ -2,3 +2,5 @@
 env.sh*
 .cache.yaml*
 config.yaml
+run.sh
+test.go
