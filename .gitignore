@@ -4,3 +4,4 @@ env.sh*
 config.yaml
 run.sh
 test.go
+bin

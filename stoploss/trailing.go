@@ -33,6 +33,7 @@ type Trailing struct {
 	logger                 *log.Logger
 	fileMutex              *sync.Mutex
 	chatNotify             string
+	exchangeBalance        string
 }
 
 // NewTrailing new trailing instance
@@ -99,30 +100,15 @@ func (tlg *Trailing) RunStop() bool {
 }
 
 func (tlg *Trailing) runSell() bool {
-	if tlg.lastStop == 0 {
-		var err error
-		quantity := tlg.quantity
-		if quantity == "" {
-			quantity, err = tlg.exchange.GetBalance(tlg.baseCoin)
-			if err != nil {
-				tlg.notify.Send("Cannot get initial balance, error:" + err.Error())
-				return true
-			}
-		}
+	quantity, checkFailed := tlg.getQuantity()
+	if checkFailed == true {
+		return true
+	} else {
+		tlg.notify.Send(fmt.Sprintf("Ready to sell %s %s coins on %s exchange", quantity, tlg.baseCoin, tlg.exchange.Name()))
+	}
 
-		quantityFlt := float64(0)
-		quantityFlt, err = strconv.ParseFloat(quantity, 64)
-		if err != nil {
-			tlg.notify.Send("Cannot parse the quantity to a float, error:" + err.Error())
-			return true
-		}
-
-		if quantityFlt > 0.0 {
-			tlg.notify.Send(fmt.Sprintf("Found %.3f %s coins available to sell on the %s exchange", quantityFlt, tlg.baseCoin, tlg.exchange.Name()))
-		} else {
-			tlg.notify.Send(fmt.Sprintf("Cannot find any %s coins on the %s exchange", tlg.baseCoin, tlg.exchange.Name()))
-			return true
-		}
+	if setFailed := tlg.setHighSellLimitOrder(quantity); setFailed == true {
+		return true
 	}
 
 	marketPrice, err := tlg.exchange.GetMarketPrice(tlg.baseCoin, tlg.countCoin)
@@ -132,6 +118,7 @@ func (tlg *Trailing) runSell() bool {
 	}
 
 	tlg.setObservedHighPrice(marketPrice)
+
 	// TODO: Set an upper threshold before this kicks in Sell Threshold - lookup what it was bought for and add x percentage
 	// need either the start number or the threshold number manually or automatically
 
@@ -171,14 +158,14 @@ func (tlg *Trailing) runSell() bool {
 		return false
 	}
 
-	quantity := tlg.quantity
-	if quantity == "" {
-		quantity, err = tlg.exchange.GetBalance(tlg.baseCoin)
-		if err != nil {
-			tlg.notify.Send("Cannot get balance, error:" + err.Error())
-			return true
-		}
-	}
+	//quantity := tlg.quantity
+	//if quantity == "" {
+	//	quantity, err = tlg.exchange.GetBalance(tlg.baseCoin)
+	//	if err != nil {
+	//		tlg.notify.Send("Cannot get balance, error:" + err.Error())
+	//		return true
+	//	}
+	//}
 
 	order, err := tlg.exchange.Sell(tlg.baseCoin, tlg.countCoin, quantity)
 	if err != nil {
@@ -240,14 +227,72 @@ func (tlg *Trailing) computeSellStop(price float64) float64 {
 	return sellStop
 }
 
-func (tlg *Trailing) getBuyPriceSellStop(buyPrice float64) float64 {
-	if tlg.maxLossStopFactor > 0 {
-		//tlg.logger.Printf("BuyPrice Sell: %.6f\n\n", buyPrice * (1-tlg.maxLossStopFactor))
-		return buyPrice * (1 - tlg.maxLossStopFactor)
-	}
+func (tlg *Trailing) getQuantity() (string, bool) {
+	if tlg.lastStop == 0 {
+		var err error
+		tlg.exchangeBalance, err = tlg.exchange.GetBalance(tlg.baseCoin)
+		if err != nil {
+			tlg.notify.Send("Cannot get balance, error:" + err.Error())
+			return "", true
+		}
 
-	return tlg.price
+		exchangeBalanceFlt := float64(0)
+		exchangeBalanceFlt, err = strconv.ParseFloat(tlg.exchangeBalance, 64)
+		if err != nil {
+			tlg.notify.Send("Cannot parse the exchangeBalance to a float, error:" + err.Error())
+			return "", true
+		}
+
+		quantityFlt := float64(0)
+		quantityFlt, err = strconv.ParseFloat(tlg.quantity, 64)
+		if err != nil {
+			tlg.notify.Send("Cannot parse the quantity to a float, error:" + err.Error())
+			return "", true
+		}
+
+		if exchangeBalanceFlt > 0.0 {
+			if tlg.quantity != "" && exchangeBalanceFlt < quantityFlt {
+				tlg.notify.Send(fmt.Sprintf("Amount is set to sell %.3f coins, but only found %.3f %s coins available on the %s exchange, exiting",
+					quantityFlt, exchangeBalanceFlt, tlg.baseCoin, tlg.exchange.Name()))
+				return "", true
+			}
+
+			tlg.notify.Send(fmt.Sprintf("Found %.3f %s coins available to sell on the %s exchange", exchangeBalanceFlt, tlg.baseCoin, tlg.exchange.Name()))
+
+			if tlg.quantity == "" {
+				return tlg.exchangeBalance, false
+			} else {
+				return tlg.quantity, false
+			}
+		} else {
+			tlg.notify.Send(fmt.Sprintf("Cannot find any %s coins on the %s exchange", tlg.baseCoin, tlg.exchange.Name()))
+			return "", true
+		}
+	}
 }
+
+//func (tlg *Trailing) setHighSellLimitOrder(quantity string) bool {
+//	if tlg.lastStop == 0 && tlg.limitSellFactor > 0.0 {
+//		limitSellOrder := tlg.exchange.GetLimitOrder("SELL")
+//
+//		if limitSellOrder > 0 {
+//			tlg.exchange.CancelLimitOrder("SELL", orderId)
+//		}
+//
+//		sellPrice := tlg.buyPrice + (tlg.buyPrice * tlg.limitSellFactor)
+//		tlg.exchange.SetLimitOrder("SELL", tlg.baseCoin, tlg.countCoin, quantity, sellPrice)
+//	}
+//	return false
+//}
+//
+//func (tlg *Trailing) getBuyPriceSellStop(buyPrice float64) float64 {
+//	if tlg.maxLossStopFactor > 0 {
+//		//tlg.logger.Printf("BuyPrice Sell: %.6f\n\n", buyPrice * (1-tlg.maxLossStopFactor))
+//		return buyPrice * (1 - tlg.maxLossStopFactor)
+//	}
+//
+//	return tlg.price
+//}
 
 func (tlg *Trailing) notifyStopLossChange(prev float64, next float64, price float64) {
 	result := big.NewFloat(prev).Cmp(big.NewFloat(next))
@@ -259,7 +304,7 @@ func (tlg *Trailing) notifyStopLossChange(prev float64, next float64, price floa
 	marketPriceGain := ((price - tlg.buyPrice) / tlg.buyPrice) * 100
 	stopPriceGain := ((next - tlg.buyPrice) / tlg.buyPrice) * 100
 	stopToMarketDiff := ((next - price) / price) * 100
-	tlg.notify.Send(fmt.Sprintf("SL %s/%s (%s Start:-%.1f%% End:-%.1f%% Max:-%.1f%%) Stop Price: %.8f (%.3f%%) Market Price: %.8f (%.3f%%) Stop/Market: %.3f%%", tlg.baseCoin, tlg.countCoin, tlg.orderType, tlg.startStopFactor*100, tlg.endStopFactor*100, tlg.maxLossStopFactor*100, next, stopPriceGain, price, marketPriceGain, stopToMarketDiff))
+	tlg.notify.Send(fmt.Sprintf("%s/%s (%s Start:-%.1f%% End:-%.1f%% Max:-%.1f%%) Stop Price: %.8f (%.3f%%) Market Price: %.8f (%.3f%%) Stop/Market: %.3f%%", tlg.baseCoin, tlg.countCoin, tlg.orderType, tlg.startStopFactor*100, tlg.endStopFactor*100, tlg.maxLossStopFactor*100, next, stopPriceGain, price, marketPriceGain, stopToMarketDiff))
 }
 
 func (tlg *Trailing) runBuy() bool {
