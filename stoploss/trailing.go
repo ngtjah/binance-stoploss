@@ -221,7 +221,7 @@ func (tlg *Trailing) computeSellStop(price float64) float64 {
 	max := tlg.endStopFactor
 
 	minSellRange := tlg.buyPrice + (tlg.buyPrice * tlg.endStopFactor)
-	maxSellRange := tlg.buyPrice + (tlg.buyPrice * (tlg.limitSellFactor - tlg.startStopFactor))
+	maxSellRange := tlg.buyPrice + (tlg.buyPrice * (tlg.limitSellFactor))
 	//fmt.Printf("range: %f - %f\n", minSellRange, maxSellRange)
 
 	percent := (price - minSellRange) / (maxSellRange - minSellRange)
