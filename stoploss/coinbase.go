@@ -10,12 +10,13 @@ import (
 )
 
 type Coinbase struct {
+	Market
 	api *coinbasepro.Client
 	ctx context.Context
 }
 
 func NewCoinbaseExchange(ctx context.Context, api *coinbasepro.Client) *Coinbase {
-	return &Coinbase{api, ctx}
+	return &Coinbase{api: api, ctx: ctx}
 }
 
 func (exchange *Coinbase) Name() string {

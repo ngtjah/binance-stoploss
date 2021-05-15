@@ -34,6 +34,8 @@ type Trailing struct {
 	fileMutex              *sync.Mutex
 	chatNotify             string
 	exchangeBalance        string
+	marketCachePath        string
+	orderId                string
 }
 
 // NewTrailing new trailing instance
@@ -72,6 +74,7 @@ func NewTrailing(
 		logger:            logger,
 		fileMutex:         fileMutex,
 		chatNotify:        chatNotify,
+		marketCachePath:   ".market-cache.yaml",
 	}
 
 	if tlg.orderType == "BUY" {
@@ -90,7 +93,6 @@ func (tlg *Trailing) RunStop() bool {
 	if tlg.orderType == "BUY" {
 		run = tlg.runBuy()
 	} else {
-
 		run = tlg.runSell()
 	}
 
@@ -107,9 +109,7 @@ func (tlg *Trailing) runSell() bool {
 		tlg.notify.Send(fmt.Sprintf("Ready to sell %s %s coins on %s exchange", quantity, tlg.baseCoin, tlg.exchange.Name()))
 	}
 
-	if setFailed := tlg.setHighSellLimitOrder(quantity); setFailed == true {
-		return true
-	}
+	tlg.setHighSellLimitOrder(quantity)
 
 	marketPrice, err := tlg.exchange.GetMarketPrice(tlg.baseCoin, tlg.countCoin)
 	if err != nil {
@@ -207,8 +207,8 @@ func (tlg *Trailing) computeSellStop(price float64) float64 {
 	min := tlg.startStopFactor
 	max := tlg.endStopFactor
 
-	minSellRange := tlg.buyPrice + (tlg.buyPrice * tlg.endStopFactor)
-	maxSellRange := tlg.buyPrice + (tlg.buyPrice * (tlg.limitSellFactor))
+	minSellRange := tlg.buyPrice * (1 + tlg.startStopFactor)
+	maxSellRange := tlg.buyPrice * (1 + tlg.limitSellFactor)
 	//fmt.Printf("range: %f - %f\n", minSellRange, maxSellRange)
 
 	percent := (price - minSellRange) / (maxSellRange - minSellRange)
@@ -244,10 +244,12 @@ func (tlg *Trailing) getQuantity() (string, bool) {
 		}
 
 		quantityFlt := float64(0)
-		quantityFlt, err = strconv.ParseFloat(tlg.quantity, 64)
-		if err != nil {
-			tlg.notify.Send("Cannot parse the quantity to a float, error:" + err.Error())
-			return "", true
+		if tlg.quantity != "" {
+			quantityFlt, err = strconv.ParseFloat(tlg.quantity, 64)
+			if err != nil {
+				tlg.notify.Send("Cannot parse the quantity to a float, error:" + err.Error())
+				return "", true
+			}
 		}
 
 		if exchangeBalanceFlt > 0.0 {
@@ -269,30 +271,47 @@ func (tlg *Trailing) getQuantity() (string, bool) {
 			return "", true
 		}
 	}
+	return "", true
 }
 
-//func (tlg *Trailing) setHighSellLimitOrder(quantity string) bool {
-//	if tlg.lastStop == 0 && tlg.limitSellFactor > 0.0 {
-//		limitSellOrder := tlg.exchange.GetLimitOrder("SELL")
-//
-//		if limitSellOrder > 0 {
-//			tlg.exchange.CancelLimitOrder("SELL", orderId)
-//		}
-//
-//		sellPrice := tlg.buyPrice + (tlg.buyPrice * tlg.limitSellFactor)
-//		tlg.exchange.SetLimitOrder("SELL", tlg.baseCoin, tlg.countCoin, quantity, sellPrice)
-//	}
-//	return false
-//}
-//
-//func (tlg *Trailing) getBuyPriceSellStop(buyPrice float64) float64 {
-//	if tlg.maxLossStopFactor > 0 {
-//		//tlg.logger.Printf("BuyPrice Sell: %.6f\n\n", buyPrice * (1-tlg.maxLossStopFactor))
-//		return buyPrice * (1 - tlg.maxLossStopFactor)
-//	}
-//
-//	return tlg.price
-//}
+func (tlg *Trailing) setHighSellLimitOrder(quantity string) {
+	if tlg.lastStop == 0 && tlg.limitSellFactor > 0.0 {
+		sellPrice := tlg.buyPrice * (1 + tlg.limitSellFactor)
+
+		orderId, err := tlg.exchange.GetCacheLimitOrderId(tlg.logger, tlg.marketCachePath, tlg.fileMutex, tlg.exchange.Name(), "SELL", tlg.baseCoin, tlg.countCoin, quantity, sellPrice)
+		if err != nil {
+			tlg.logger.Fatalf("Failed to get cache limit order: %s", err)
+		}
+
+		if orderId == "replace" {
+			tlg.exchange.CancelLimitOrder(orderId, tlg.baseCoin, tlg.countCoin)
+		}
+
+		if orderId == "replace" || orderId == "" {
+			newOrderId, err := tlg.exchange.SetLimitOrder("SELL", tlg.baseCoin, tlg.countCoin, quantity, sellPrice)
+			if err != nil {
+				tlg.logger.Fatalf("Failed to set the limit order: %s", err)
+			}
+			tlg.orderId = newOrderId
+
+			err = tlg.exchange.SetCacheLimitOrder(tlg.logger, tlg.marketCachePath, tlg.fileMutex, tlg.exchange.Name(), "SELL", tlg.baseCoin, tlg.countCoin, quantity, sellPrice, newOrderId)
+			if err != nil {
+				tlg.logger.Fatalf("Failed to set the cache limit order: %s\n", err)
+			}
+		} else {
+			tlg.orderId = orderId
+		}
+	}
+}
+
+func (tlg *Trailing) getBuyPriceSellStop(buyPrice float64) float64 {
+	if tlg.maxLossStopFactor > 0 {
+		//tlg.logger.Printf("BuyPrice Sell: %.6f\n\n", buyPrice * (1-tlg.maxLossStopFactor))
+		return buyPrice * (1 - tlg.maxLossStopFactor)
+	}
+
+	return tlg.price
+}
 
 func (tlg *Trailing) notifyStopLossChange(prev float64, next float64, price float64) {
 	result := big.NewFloat(prev).Cmp(big.NewFloat(next))

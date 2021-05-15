@@ -173,7 +173,7 @@ func main() {
 				if v.Exchange == "binance" {
 					exchange = stoploss.NewBinanceExchange(context.Background(), binanceApi)
 				} else if v.Exchange == "coinbase" {
-					exchange = stoploss.NewCoinbaseExchange(context.Background(), coinbaseApi)
+					//exchange = stoploss.NewCoinbaseExchange(context.Background(), coinbaseApi)
 				} else {
 					logger.Fatal("Unrecognized exchange in config")
 				}
