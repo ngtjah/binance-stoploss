@@ -1,7 +1,9 @@
 .idea
 env.sh*
 .cache.yaml*
+.market-cache.yaml*
 config.yaml
 run.sh
 test.go
 bin
+*.png

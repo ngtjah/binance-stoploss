@@ -24,20 +24,49 @@ func (exchange *Binance) Name() string {
 }
 
 // GetBalance get balance for coin
-func (exchange *Binance) GetBalance(coin string) (string, error) {
+func (exchange *Binance) GetBalance(coin string) (string, int, error) {
 	coin = strings.ToUpper(coin)
 	account, err := exchange.api.NewGetAccountService().Do(exchange.ctx)
 	if err != nil {
-		return "0", err
+		return "0", 0, err
+	}
+
+	var precision int
+	precision, err = exchange.GetExchangeInfo(coin)
+	if err != nil {
+		return "0", 0, err
 	}
 
 	for _, balance := range account.Balances {
 		if strings.ToUpper(balance.Asset) == coin {
-			return balance.Free, nil
+			return balance.Free, precision, nil
 		}
 	}
 
-	return "0", nil
+	return "0", 0, nil
+}
+
+func (exchange *Binance) GetExchangeInfo(coin string) (int, error) {
+	exchangeInfo, err := exchange.api.NewExchangeInfoService().Do(exchange.ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	//fmt.Printf("exchangeInfo: %v", exchangeInfo.Symbols)
+	for _, symbol := range exchangeInfo.Symbols {
+		if strings.ToUpper(symbol.BaseAsset) == coin {
+			zero, dot := "0", "."
+			tickSize := strings.TrimRight(strings.TrimRight(symbol.PriceFilter().TickSize, zero), dot)
+			//fmt.Println("ticksize:", tickSize)
+			s := tickSize
+			i := strings.IndexByte(tickSize, '.')
+			if i > -1 {
+				return len(s) - i - 1, nil
+			}
+			return 0, nil
+		}
+	}
+	return 0, nil
 }
 
 // GetMarketPrice get last price for market pair
@@ -86,20 +115,46 @@ func (exchange *Binance) market(baseCoin string, countCount string) string {
 	return fmt.Sprintf("%s%s", baseCoin, countCount)
 }
 
-func (exchange *Binance) GetLimitOrder(orderId string, baseCoin string, countCoin string, quantity string, price float64) (string, error) {
+func (exchange *Binance) GetLimitOrderStatusFilled(orderId string, baseCoin string, countCoin string) (bool, error) {
 	id, err := strconv.ParseInt(orderId, 10, 64)
 	if err != nil {
-		return "", err
+		return false, err
 	}
 
 	order, err := exchange.api.NewGetOrderService().Symbol(exchange.market(baseCoin, countCoin)).
 		OrderID(id).Do(exchange.ctx)
 
 	if err != nil {
-		return "", err
+		return false, err
 	}
 
-	return strconv.FormatInt(order.OrderID, 10), nil
+	if order.Status == binance.OrderStatusTypeFilled {
+		fmt.Println("Order Status:", order.Status)
+		return true, nil
+	} else {
+		return false, nil
+	}
+}
+
+func (exchange *Binance) GetLimitOrderRunning(orderId string, baseCoin string, countCoin string) (bool, error) {
+	id, err := strconv.ParseInt(orderId, 10, 64)
+	if err != nil {
+		return false, err
+	}
+
+	order, err := exchange.api.NewGetOrderService().Symbol(exchange.market(baseCoin, countCoin)).
+		OrderID(id).Do(exchange.ctx)
+
+	if err != nil {
+		return false, err
+	}
+
+	if order.Status == binance.OrderStatusTypeNew || order.Status == binance.OrderStatusTypePartiallyFilled {
+		fmt.Println("Order IsRunning:", order.Status)
+		return true, nil
+	} else {
+		return false, nil
+	}
 }
 
 func (exchange *Binance) CancelLimitOrder(orderId string, baseCoin string, countCoin string) error {
@@ -118,14 +173,13 @@ func (exchange *Binance) CancelLimitOrder(orderId string, baseCoin string, count
 	return nil
 }
 
-func (exchange *Binance) SetLimitOrder(orderType string, baseCoin string, countCoin string, quantity string, price float64) (string, error) {
-	priceStr := fmt.Sprintf("%f", price)
-	fmt.Println("limit price:", priceStr)
+func (exchange *Binance) SetLimitOrder(orderType string, baseCoin string, countCoin string, quantity string, price string) (string, error) {
+	fmt.Println("limit price:", price)
 	if orderType == "SELL" {
 		order, err := exchange.api.NewCreateOrderService().Symbol(exchange.market(baseCoin, countCoin)).
 			Side(binance.SideTypeSell).Type(binance.OrderTypeLimit).
 			TimeInForce(binance.TimeInForceTypeGTC).Quantity(quantity).
-			Price(priceStr).Do(exchange.ctx)
+			Price(price).Do(exchange.ctx)
 
 		if err != nil {
 			return "", err

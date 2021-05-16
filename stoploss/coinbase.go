@@ -24,23 +24,23 @@ func (exchange *Coinbase) Name() string {
 }
 
 // GetBalance get balance for coin
-func (exchange *Coinbase) GetBalance(coin string) (string, error) {
+func (exchange *Coinbase) GetBalance(coin string) (string, int, error) {
 	coin = strings.ToUpper(coin)
 
 	accounts, err := exchange.api.GetAccounts()
 	if err != nil {
-		return "0", err
+		return "0", 0, err
 	}
 
 	//fmt.Printf("Accounts: %+v\n", accounts)
 
 	for _, account := range accounts {
 		if strings.ToUpper(account.Currency) == coin {
-			return account.Available, nil
+			return account.Available, 0, nil // TODO: FIX THIS ZERO!!
 		}
 	}
 
-	return "0", nil
+	return "0", 0, nil
 }
 
 // GetMarketPrice get last price for market pair

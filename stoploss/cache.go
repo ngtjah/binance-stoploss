@@ -21,6 +21,7 @@ type Sell struct {
 	LastStop          float64   `yaml:"lastStop"`
 	BuyPrice          float64   `yaml:"buy_price"`
 	ObservedHighPrice float64   `yaml:"observed_high_price"`
+	CoinPrecision     int       `yaml:"coin_precision"`
 	Updated           time.Time `yaml:"updated"`
 }
 
@@ -57,6 +58,7 @@ func (tlg *Trailing) loadCache(cachePath string, fileMutex *sync.Mutex) {
 				// these are the only fields we pull in from the cache
 				tlg.lastStopCache = order.LastStop
 				tlg.observedHighPrice = order.ObservedHighPrice
+				tlg.coinPrecision = order.CoinPrecision
 				//tlg.logger.Printf("Setting %s LastStop in tlg.lastStopCache: %f\n", v.Pair, v.LastStop)
 			} else {
 				// expired
@@ -108,6 +110,7 @@ func (tlg *Trailing) SaveCache(fileMutex *sync.Mutex) {
 				fileCache.Sell[i].LastStop = tlg.lastStop
 				fileCache.Sell[i].BuyPrice = tlg.buyPrice
 				fileCache.Sell[i].ObservedHighPrice = tlg.observedHighPrice
+				fileCache.Sell[i].CoinPrecision = tlg.coinPrecision
 				fileCache.Sell[i].Updated = time.Now()
 				//tlg.logger.Printf("Setting %s LastStop in tlg.lastStopCache: %f\n", v.Pair, v.LastStop)
 			} else {

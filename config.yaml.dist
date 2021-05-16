@@ -9,3 +9,4 @@ coins:
       max_loss_percent: 1    # from the buy_price - 0 to disable, should probably be less than the start_percent because it does NOT trail at all
                              # reset buy price if lowering (making number larger) - and save the Observed High in the cache
       limit_sell_percent: 15 # above buy_price to set a limit sell - 0 to disable??????????
+      amount: 10             # amount of coins to sell (optional)

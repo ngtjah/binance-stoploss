@@ -198,6 +198,7 @@ func main() {
 				//fileMutex.Lock()
 				//trailing.Chart(v.Exchange, v.Pair)
 				//fileMutex.Unlock()
+				//os.Exit(1)
 
 				for {
 					if trailing.RunStop() {

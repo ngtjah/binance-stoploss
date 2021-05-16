@@ -36,6 +36,7 @@ type Trailing struct {
 	exchangeBalance        string
 	marketCachePath        string
 	orderId                string
+	coinPrecision          int
 }
 
 // NewTrailing new trailing instance
@@ -82,6 +83,7 @@ func NewTrailing(
 	}
 
 	tlg.loadCache(".cache.yaml", tlg.fileMutex)
+	tlg.exchange.LoadCacheLimitOrders(tlg.logger, tlg.marketCachePath, tlg.fileMutex)
 
 	return tlg
 }
@@ -102,10 +104,22 @@ func (tlg *Trailing) RunStop() bool {
 }
 
 func (tlg *Trailing) runSell() bool {
-	quantity, checkFailed := tlg.getQuantity()
-	if checkFailed == true {
+	quantity, exchangeBalance, coinPrecision, err := tlg.getQuantity()
+	if err != nil {
+		tlg.notify.Send("Cannot get quantity, error:" + err.Error())
 		return true
-	} else {
+	}
+
+	tlg.coinPrecision = coinPrecision
+	tlg.exchangeBalance = exchangeBalance
+
+	if tlg.lastStop == 0 { // first run
+		// TODO: still need to validate free vs taken when a sell order is in
+		failed := tlg.validateQuantity(quantity, exchangeBalance)
+		if failed == true {
+			return true // TODO: look into making this an error or something better
+		}
+
 		tlg.notify.Send(fmt.Sprintf("Ready to sell %s %s coins on %s exchange", quantity, tlg.baseCoin, tlg.exchange.Name()))
 	}
 
@@ -135,7 +149,7 @@ func (tlg *Trailing) runSell() bool {
 	// --print the percentage loss/gain based on the start_price
 	// --prevent sell from bad buy_price on first run
 
-	// Grab the lastStop from the cache
+	// Grab the lastStop from the cache on first run
 	if tlg.lastStop == 0 {
 		if tlg.lastStopCache > 0 {
 			tlg.setLastStop(tlg.lastStopCache)
@@ -146,11 +160,18 @@ func (tlg *Trailing) runSell() bool {
 		if marketPrice <= stop {
 			tlg.notify.Send("Preventing sell on first run, clearing the last recorded stop price!")
 			tlg.setLastStop(0)
+			tlg.observedHighPrice = 0
 		}
 	}
 
 	stop := math.Max(tlg.getSellStop(marketPrice), tlg.getBuyPriceSellStop(tlg.buyPrice))
 	//fmt.Printf("Stop: %f\n", stop)
+
+	validated := tlg.validateHighSellLimitOrder(tlg.orderId)
+	if validated == false {
+		tlg.logger.Printf("High sell limit order filled (probably)!", err)
+		return true
+	}
 
 	if marketPrice > stop {
 		tlg.notifyStopLossChange(tlg.lastStop, stop, marketPrice)
@@ -169,10 +190,15 @@ func (tlg *Trailing) runSell() bool {
 
 	order, err := tlg.exchange.Sell(tlg.baseCoin, tlg.countCoin, quantity)
 	if err != nil {
-		tlg.notify.Send("market: " + tlg.market + " quantity: " + quantity)
-		tlg.notify.Send("Cannot create sell order, error:" + err.Error())
+		tlg.notify.Send("Cannot create sell order, market: " + tlg.market + "quantity: " + tlg.quantity + " error:" + err.Error())
 	} else {
 		tlg.notify.Send(fmt.Sprintf("Sell: %s %s - Market Price (%s): %.8f - Order ID: %s - %s", quantity, tlg.baseCoin, tlg.market, marketPrice, order, tlg.chatNotify))
+	}
+
+	tlg.logger.Printf("Canceling Limit Sell OrderID: %s", tlg.orderId)
+	err = tlg.exchange.CancelLimitOrder(tlg.orderId, tlg.baseCoin, tlg.countCoin)
+	if err != nil {
+		tlg.logger.Printf("Failed to cancel order: %s", err)
 	}
 
 	return true
@@ -227,68 +253,134 @@ func (tlg *Trailing) computeSellStop(price float64) float64 {
 	return sellStop
 }
 
-func (tlg *Trailing) getQuantity() (string, bool) {
-	if tlg.lastStop == 0 {
-		var err error
-		tlg.exchangeBalance, err = tlg.exchange.GetBalance(tlg.baseCoin)
+func (tlg *Trailing) validateQuantity(quantity string, exchangeBalance string) bool {
+	var err error
+	exchangeBalanceFlt := float64(0)
+	exchangeBalanceFlt, err = strconv.ParseFloat(exchangeBalance, 64)
+	if err != nil {
+		tlg.notify.Send("Cannot parse the exchangeBalance to a float, error:" + err.Error())
+		return true
+	}
+
+	quantityFlt := float64(0)
+	if quantity != "" {
+		quantityFlt, err = strconv.ParseFloat(quantity, 64)
 		if err != nil {
-			tlg.notify.Send("Cannot get balance, error:" + err.Error())
-			return "", true
-		}
-
-		exchangeBalanceFlt := float64(0)
-		exchangeBalanceFlt, err = strconv.ParseFloat(tlg.exchangeBalance, 64)
-		if err != nil {
-			tlg.notify.Send("Cannot parse the exchangeBalance to a float, error:" + err.Error())
-			return "", true
-		}
-
-		quantityFlt := float64(0)
-		if tlg.quantity != "" {
-			quantityFlt, err = strconv.ParseFloat(tlg.quantity, 64)
-			if err != nil {
-				tlg.notify.Send("Cannot parse the quantity to a float, error:" + err.Error())
-				return "", true
-			}
-		}
-
-		if exchangeBalanceFlt > 0.0 {
-			if tlg.quantity != "" && exchangeBalanceFlt < quantityFlt {
-				tlg.notify.Send(fmt.Sprintf("Amount is set to sell %.3f coins, but only found %.3f %s coins available on the %s exchange, exiting",
-					quantityFlt, exchangeBalanceFlt, tlg.baseCoin, tlg.exchange.Name()))
-				return "", true
-			}
-
-			tlg.notify.Send(fmt.Sprintf("Found %.3f %s coins available to sell on the %s exchange", exchangeBalanceFlt, tlg.baseCoin, tlg.exchange.Name()))
-
-			if tlg.quantity == "" {
-				return tlg.exchangeBalance, false
-			} else {
-				return tlg.quantity, false
-			}
-		} else {
-			tlg.notify.Send(fmt.Sprintf("Cannot find any %s coins on the %s exchange", tlg.baseCoin, tlg.exchange.Name()))
-			return "", true
+			tlg.notify.Send("Cannot parse the quantity to a float, error:" + err.Error())
+			return true
 		}
 	}
-	return "", true
+
+	if exchangeBalanceFlt > 0.0 {
+		if exchangeBalanceFlt < quantityFlt {
+			tlg.notify.Send(fmt.Sprintf("Amount is set to sell %.3f coins, but only found %.3f %s coins available on the %s exchange, exiting",
+				quantityFlt, exchangeBalanceFlt, tlg.baseCoin, tlg.exchange.Name()))
+			return true
+		}
+		tlg.notify.Send(fmt.Sprintf("Found %.3f %s coins available to sell on the %s exchange", exchangeBalanceFlt, tlg.baseCoin, tlg.exchange.Name()))
+	} else {
+		tlg.notify.Send(fmt.Sprintf("Cannot find any %s coins on the %s exchange", tlg.baseCoin, tlg.exchange.Name()))
+		return true
+	}
+	return false
+}
+
+func (tlg *Trailing) getQuantity() (string, string, int, error) {
+	var (
+		exchangeBalance            string
+		coinPrecision              int
+		err                        error
+		highSellOrderId            string
+		highSellLimitOrderRunning  bool
+		highSellLimitOrderQuantity string
+	)
+
+	if tlg.lastStop == 0 && tlg.limitSellFactor > 0.0 {
+		sellPrice := tlg.setHighSellLimitPrice()
+		highSellOrderId, _, err = tlg.exchange.GetCacheLimitOrderId(tlg.logger, tlg.exchange.Name(), "SELL", tlg.baseCoin, tlg.countCoin, "", sellPrice)
+		if err != nil {
+			//tlg.logger.Fatalf("Failed to get cache limit order: %s", err)
+			return "", "", 0, err
+		}
+
+		if highSellOrderId != "" {
+			highSellLimitOrderRunning, err = tlg.exchange.GetLimitOrderRunning(highSellOrderId, tlg.baseCoin, tlg.countCoin)
+			if err != nil {
+				return "", "", 0, err
+			}
+
+			if highSellLimitOrderRunning {
+				highSellLimitOrderQuantity, err = tlg.exchange.GetCacheLimitOrderQuantity(tlg.exchange.Name(), "SELL", tlg.baseCoin, tlg.countCoin)
+				if err != nil {
+					return "", "", 0, err
+				}
+			}
+		}
+	}
+
+	// skip the Balance lookup if the highSellLimitOrder is running
+	if highSellLimitOrderRunning == false {
+		// if there isn't already a valid high sell limit order in place lookup the balance
+		if tlg.quantity == "" || tlg.coinPrecision == 0 {
+			exchangeBalance, coinPrecision, err = tlg.exchange.GetBalance(tlg.baseCoin)
+			if err != nil {
+				return "", "", 0, err
+			}
+		}
+	}
+
+	if highSellLimitOrderRunning {
+		return highSellLimitOrderQuantity, highSellLimitOrderQuantity, tlg.coinPrecision, nil
+	} else {
+		// quantity wasn't provided by the config
+		if tlg.quantity == "" {
+			return exchangeBalance, exchangeBalance, coinPrecision, nil
+			// quantity was provided but exchange balance was not
+		} else if exchangeBalance != "" && coinPrecision != 0 {
+			return tlg.quantity, exchangeBalance, coinPrecision, nil
+		} else {
+			return tlg.quantity, tlg.quantity, tlg.coinPrecision, nil
+		}
+	}
+}
+
+func (tlg *Trailing) validateHighSellLimitOrder(orderId string) bool {
+	if tlg.limitSellFactor > 0.0 {
+		filled, err := tlg.exchange.GetLimitOrderStatusFilled(orderId, tlg.baseCoin, tlg.countCoin)
+		if err != nil {
+			tlg.logger.Printf("Get Limit Order Status Failed: %s", err)
+			return true
+		}
+		if filled {
+			return false
+		}
+	}
+	return true
+}
+
+func (tlg *Trailing) setHighSellLimitPrice() float64 {
+	return tlg.buyPrice * (1 + tlg.limitSellFactor)
 }
 
 func (tlg *Trailing) setHighSellLimitOrder(quantity string) {
 	if tlg.lastStop == 0 && tlg.limitSellFactor > 0.0 {
-		sellPrice := tlg.buyPrice * (1 + tlg.limitSellFactor)
+		sellPrice := tlg.setHighSellLimitPrice()
 
-		orderId, err := tlg.exchange.GetCacheLimitOrderId(tlg.logger, tlg.marketCachePath, tlg.fileMutex, tlg.exchange.Name(), "SELL", tlg.baseCoin, tlg.countCoin, quantity, sellPrice)
+		orderId, orderMsg, err := tlg.exchange.GetCacheLimitOrderId(tlg.logger, tlg.exchange.Name(), "SELL", tlg.baseCoin, tlg.countCoin, quantity, sellPrice)
 		if err != nil {
 			tlg.logger.Fatalf("Failed to get cache limit order: %s", err)
 		}
 
-		if orderId == "replace" {
-			tlg.exchange.CancelLimitOrder(orderId, tlg.baseCoin, tlg.countCoin)
+		if orderMsg == "replace" {
+			tlg.logger.Printf("Canceling OrderID: %s", orderId)
+			err = tlg.exchange.CancelLimitOrder(orderId, tlg.baseCoin, tlg.countCoin)
+			if err != nil {
+				tlg.logger.Printf("Failed to cancel order: %s", err)
+			}
 		}
 
-		if orderId == "replace" || orderId == "" {
-			newOrderId, err := tlg.exchange.SetLimitOrder("SELL", tlg.baseCoin, tlg.countCoin, quantity, sellPrice)
+		if orderMsg == "replace" || orderMsg == "" {
+			newOrderId, err := tlg.exchange.SetLimitOrder("SELL", tlg.baseCoin, tlg.countCoin, quantity, strconv.FormatFloat(sellPrice, 'f', 5, 64))
 			if err != nil {
 				tlg.logger.Fatalf("Failed to set the limit order: %s", err)
 			}
@@ -299,10 +391,25 @@ func (tlg *Trailing) setHighSellLimitOrder(quantity string) {
 				tlg.logger.Fatalf("Failed to set the cache limit order: %s\n", err)
 			}
 		} else {
+			// TODO: We assume this order ID is still valid
 			tlg.orderId = orderId
 		}
 	}
 }
+
+//func (tlg *Trailing) setHighSellLimitOrder(quantity string) bool {
+//	if tlg.lastStop == 0 && tlg.limitSellFactor > 0.0 {
+//		limitSellOrder := tlg.exchange.GetLimitOrderStatusFilled("SELL")
+//
+//		if limitSellOrder > 0 {
+//			tlg.exchange.CancelLimitOrder("SELL", orderId)
+//		}
+//
+//		sellPrice := tlg.buyPrice + (tlg.buyPrice * tlg.limitSellFactor)
+//		tlg.exchange.SetLimitOrder("SELL", tlg.baseCoin, tlg.countCoin, quantity, sellPrice)
+//	}
+//	return false
+//}
 
 func (tlg *Trailing) getBuyPriceSellStop(buyPrice float64) float64 {
 	if tlg.maxLossStopFactor > 0 {
@@ -344,7 +451,7 @@ func (tlg *Trailing) runBuy() bool {
 
 	quantity := tlg.quantity
 	if quantity == "" {
-		quantity, err = tlg.exchange.GetBalance(tlg.countCoin)
+		quantity, _, err = tlg.exchange.GetBalance(tlg.countCoin)
 		if err != nil {
 			tlg.notify.Send("Cannot get balance, error:" + err.Error())
 			return true
