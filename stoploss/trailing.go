@@ -35,7 +35,7 @@ type Trailing struct {
 	chatNotify             string
 	exchangeBalance        string
 	marketCachePath        string
-	orderId                string
+	highSellLimitOrderId   string
 	coinPrecision          int
 }
 
@@ -167,7 +167,7 @@ func (tlg *Trailing) runSell() bool {
 	stop := math.Max(tlg.getSellStop(marketPrice), tlg.getBuyPriceSellStop(tlg.buyPrice))
 	//fmt.Printf("Stop: %f\n", stop)
 
-	validated := tlg.validateHighSellLimitOrder(tlg.orderId)
+	validated := tlg.validateHighSellLimitOrder(tlg.highSellLimitOrderId)
 	if validated == false {
 		tlg.logger.Printf("High sell limit order filled (probably)!", err)
 		return true
@@ -188,17 +188,19 @@ func (tlg *Trailing) runSell() bool {
 	//	}
 	//}
 
+	if tlg.highSellLimitOrderId != "" {
+		tlg.logger.Printf("Canceling Limit Sell OrderID: %s", tlg.highSellLimitOrderId)
+		err = tlg.exchange.CancelLimitOrder(tlg.highSellLimitOrderId, tlg.baseCoin, tlg.countCoin)
+		if err != nil {
+			tlg.logger.Printf("Failed to cancel high limit sell order before sell: %s", err)
+		}
+	}
+
 	order, err := tlg.exchange.Sell(tlg.baseCoin, tlg.countCoin, quantity)
 	if err != nil {
 		tlg.notify.Send("Cannot create sell order, market: " + tlg.market + "quantity: " + tlg.quantity + " error:" + err.Error())
 	} else {
 		tlg.notify.Send(fmt.Sprintf("Sell: %s %s - Market Price (%s): %.8f - Order ID: %s - %s", quantity, tlg.baseCoin, tlg.market, marketPrice, order, tlg.chatNotify))
-	}
-
-	tlg.logger.Printf("Canceling Limit Sell OrderID: %s", tlg.orderId)
-	err = tlg.exchange.CancelLimitOrder(tlg.orderId, tlg.baseCoin, tlg.countCoin)
-	if err != nil {
-		tlg.logger.Printf("Failed to cancel order: %s", err)
 	}
 
 	return true
@@ -316,15 +318,15 @@ func (tlg *Trailing) getQuantity() (string, string, int, error) {
 				}
 			}
 		}
-	}
 
-	// skip the Balance lookup if the highSellLimitOrder is running
-	if highSellLimitOrderRunning == false {
-		// if there isn't already a valid high sell limit order in place lookup the balance
-		if tlg.quantity == "" || tlg.coinPrecision == 0 {
-			exchangeBalance, coinPrecision, err = tlg.exchange.GetBalance(tlg.baseCoin)
-			if err != nil {
-				return "", "", 0, err
+		// skip the Balance lookup if the highSellLimitOrder is running - we'll just trust it is good
+		if highSellLimitOrderRunning == false {
+			// if there isn't already a valid high sell limit order in place lookup the balance
+			if tlg.quantity == "" || tlg.coinPrecision == 0 {
+				exchangeBalance, coinPrecision, err = tlg.exchange.GetBalance(tlg.baseCoin)
+				if err != nil {
+					return "", "", 0, err
+				}
 			}
 		}
 	}
@@ -364,11 +366,19 @@ func (tlg *Trailing) setHighSellLimitPrice() float64 {
 
 func (tlg *Trailing) setHighSellLimitOrder(quantity string) {
 	if tlg.lastStop == 0 && tlg.limitSellFactor > 0.0 {
+		var running bool
 		sellPrice := tlg.setHighSellLimitPrice()
 
 		orderId, orderMsg, err := tlg.exchange.GetCacheLimitOrderId(tlg.logger, tlg.exchange.Name(), "SELL", tlg.baseCoin, tlg.countCoin, quantity, sellPrice)
 		if err != nil {
 			tlg.logger.Fatalf("Failed to get cache limit order: %s", err)
+		}
+
+		if orderId != "" {
+			running, err = tlg.exchange.GetLimitOrderRunning(orderId, tlg.baseCoin, tlg.countCoin)
+			if err != nil {
+				tlg.logger.Fatalf("Failed to check if limit order is running: %s", err)
+			}
 		}
 
 		if orderMsg == "replace" {
@@ -379,12 +389,12 @@ func (tlg *Trailing) setHighSellLimitOrder(quantity string) {
 			}
 		}
 
-		if orderMsg == "replace" || orderMsg == "" {
+		if orderMsg == "replace" || orderMsg == "" || (orderId != "" && running == false) {
 			newOrderId, err := tlg.exchange.SetLimitOrder("SELL", tlg.baseCoin, tlg.countCoin, quantity, strconv.FormatFloat(sellPrice, 'f', 5, 64))
 			if err != nil {
 				tlg.logger.Fatalf("Failed to set the limit order: %s", err)
 			}
-			tlg.orderId = newOrderId
+			tlg.highSellLimitOrderId = newOrderId
 
 			err = tlg.exchange.SetCacheLimitOrder(tlg.logger, tlg.marketCachePath, tlg.fileMutex, tlg.exchange.Name(), "SELL", tlg.baseCoin, tlg.countCoin, quantity, sellPrice, newOrderId)
 			if err != nil {
@@ -392,7 +402,7 @@ func (tlg *Trailing) setHighSellLimitOrder(quantity string) {
 			}
 		} else {
 			// TODO: We assume this order ID is still valid
-			tlg.orderId = orderId
+			tlg.highSellLimitOrderId = orderId
 		}
 	}
 }
@@ -402,7 +412,7 @@ func (tlg *Trailing) setHighSellLimitOrder(quantity string) {
 //		limitSellOrder := tlg.exchange.GetLimitOrderStatusFilled("SELL")
 //
 //		if limitSellOrder > 0 {
-//			tlg.exchange.CancelLimitOrder("SELL", orderId)
+//			tlg.exchange.CancelLimitOrder("SELL", highSellLimitOrderId)
 //		}
 //
 //		sellPrice := tlg.buyPrice + (tlg.buyPrice * tlg.limitSellFactor)

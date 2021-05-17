@@ -65,7 +65,7 @@ func (m *Market) GetCacheLimitOrderId(logger *log.Logger, exchange string, order
 				//logger.Printf("Found an order in the market cache: %s\n", order.OrderId)
 				return order.OrderId, order.OrderId, nil
 			} else {
-				logger.Printf("Replace an order from the market cache - the price and quantity didn't match the config: %s\n", order.OrderId)
+				//logger.Printf("Replace an order from the market cache - the price and quantity didn't match the config: %s\n", order.OrderId)
 				return order.OrderId, "replace", nil
 			}
 		}
@@ -83,24 +83,6 @@ func (m *Market) GetCacheLimitOrderQuantity(exchange string, orderType string, b
 	}
 	return "", nil
 }
-
-//func (m *Market) GetCacheLimitOrderId2(logger *log.Logger, exchange string, orderType string, baseCoin string, countCoin string, quantity string, price float64) (string, string, error) {
-//	marketCache := m.marketCache
-//	for _, order := range marketCache.Order {
-//		market := fmt.Sprintf("%s/%s", baseCoin, countCoin)
-//		if (order.Pair == market) && (order.Exchange == exchange) && (order.OrderType == orderType) {
-//			if order.Price == price && order.Quantity == quantity {
-//				//logger.Printf("Found an order in the market cache: %s\n", order.OrderId)
-//				return order.OrderId, order.OrderId, nil
-//			} else {
-//				logger.Printf("Replace an order from the market cache - the price and quantity didn't match the config: %s\n", order.OrderId)
-//				return order.OrderId, "replace", nil
-//			}
-//		}
-//	}
-//	return "", "", nil
-//
-//}
 
 func (m *Market) SetCacheLimitOrder(logger *log.Logger, cachePath string, fileMutex *sync.Mutex, exchange string, orderType string, baseCoin string, countCoin string, quantity string, price float64, id string) error {
 	fileCache := MarketCache{}
